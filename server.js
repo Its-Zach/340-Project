@@ -18,15 +18,6 @@ const db = mysql.createPool({
   queueLimit: 0
 });
 
-db.connect(err => {
-  if (err) {
-    console.error('❌ DB connection error:', err);
-    // Don't exit - try to reconnect
-  } else {
-    console.log('✅ Connected to MySQL');
-  }
-});
-
 // Handle connection errors gracefully
 // 1️⃣ CREATE / INSERT – Arduino uses this to send data
 app.post('/addReading', async (req, res) => {
