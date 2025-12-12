@@ -25,6 +25,7 @@ db.connect(err => {
 
 // 1️⃣ CREATE / INSERT – Arduino uses this to send data
 app.post('/addReading', (req, res) => {
+  console.log('Received body:', req.body);
   const { ultrasonic_value, lidar_value, island_id, character_id } = req.body;
 
   const sql = `
@@ -138,7 +139,7 @@ app.get('/', (req, res) => {
   res.send('One Piece IoT API is running');
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
