@@ -28,15 +28,8 @@ db.connect(err => {
 });
 
 // Handle connection errors gracefully
-db.on('error', (err) => {
-  console.error('DB error:', err);
-  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-    db.connect();
-  }
-});
-
 // 1️⃣ CREATE / INSERT – Arduino uses this to send data
-app.post('/addReading', (req, res) => {
+app.post('/addReading', async (req, res) => {
   console.log('📨 Received POST /addReading');
   console.log('Body:', JSON.stringify(req.body, null, 2));
   
@@ -54,18 +47,33 @@ app.post('/addReading', (req, res) => {
     VALUES (?, ?, ?, ?)
   `;
 
-  db.query(sql, [ultrasonic_value, lidar_value, island_id, character_id], (err, result) => {
-    if (err) {
-      console.error('❌ Error inserting reading:', err);
-      return res.status(500).json({ error: 'DB insert failed', details: err.message });
-    }
+  try {
+    const [result] = await db.execute(sql, [
+      ultrasonic_value,
+      lidar_value,
+      island_id,
+      character_id
+    ]);
+
     console.log('✅ Data inserted successfully. ID:', result.insertId);
-    res.json({ 
-      message: 'Reading added', 
+
+    res.json({
+      message: 'Reading added',
       reading_id: result.insertId,
-      data: { ultrasonic_value, lidar_value, island_id, character_id }
+      data: {
+        ultrasonic_value,
+        lidar_value,
+        island_id,
+        character_id
+      }
     });
-  });
+  } catch (err) {
+    console.error('❌ Error inserting reading:', err);
+    res.status(500).json({
+      error: 'DB insert failed',
+      details: err.message
+    });
+  }
 });
 
 // Alternative route name (if Arduino uses this)
