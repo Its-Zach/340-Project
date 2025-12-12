@@ -1,18 +1,21 @@
 // server.js - Updated for Render deployment
 const express = require('express');
 const cors = require('cors');
-const mysql = require('mysql2');
+const mysql = require('mysql2/promise');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // 🔐 DB connection (MUST use env vars on Render)
-const db = mysql.createConnection({
+const db = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
-  database: process.env.DB_NAME
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 5,
+  queueLimit: 0
 });
 
 db.connect(err => {
