@@ -9,10 +9,10 @@ app.use(cors());
 
 // 🔐 DB connection (use env vars on Render)
 const db = mysql.createConnection({
-  host: process.env.DB_HOST || 'localhost', // change to your host if needed
-  user: process.env.DB_USER || 'youruser',
-  password: process.env.DB_PASS || 'yourpass',
-  database: process.env.DB_NAME || 'yourdbname'
+  host: process.env.DB_HOST || 'student-databases.cvode4s4cwrc.us-west-2.rds.amazonaws.com', // change to your host if needed
+  user: process.env.DB_USER || 'jessetorres495',
+  password: process.env.DB_PASS || 'XSoiRqCHeKaDhEbqX2XAlUuss8nJePiqI07',
+  database: process.env.DB_NAME || 'jessetorres495'
 });
 
 db.connect(err => {
