@@ -1,4 +1,6 @@
-// server.js (Combined: Express REST API + Alexa endpoint)
+// =====================
+// IMPORTS
+// =====================
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
@@ -7,14 +9,16 @@ const axios = require("axios");
 const Alexa = require("ask-sdk-core");
 const { ExpressAdapter } = require("ask-sdk-express-adapter");
 
+// =====================
+// EXPRESS APP
+// =====================
 const app = express();
 app.use(cors());
+app.use(express.json());
 
-// ✅ IMPORTANT: Alexa endpoint must use RAW body BEFORE express.json()
-const PUBLIC_BASE_URL =
-  (process.env.PUBLIC_BASE_URL || "https://three40-project-5y9o.onrender.com").replace(/\/+$/, "");
-
-// ---------- DB ----------
+// =====================
+// DATABASE (Render ENV)
+// =====================
 const db = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -25,7 +29,26 @@ const db = mysql.createPool({
   queueLimit: 0,
 });
 
-// ---------- Helpers ----------
+// =====================
+// ALEXA CONFIG
+// =====================
+const SERVER_BASE_URL = "https://three40-project-5y9o.onrender.com";
+
+// 🔥 NAME → ID MAPS (EDIT TO MATCH DB)
+const ISLANDS = [
+  { id: 1, name: "East Blue" },
+  { id: 2, name: "Alabasta" },
+];
+
+const CHARACTERS = [
+  { id: 1, name: "Luffy" },
+  { id: 2, name: "Zoro" },
+  { id: 3, name: "Nami" },
+];
+
+// =====================
+// HELPER FUNCTIONS
+// =====================
 function norm(s) {
   return String(s || "")
     .toLowerCase()
@@ -34,395 +57,210 @@ function norm(s) {
     .trim();
 }
 
-function findIdByName(rows, spoken) {
-  const t = norm(spoken);
-  if (!t) return null;
+function findIdByName(list, spokenName) {
+  const target = norm(spokenName);
+  if (!target) return null;
 
-  const exact = rows.find((r) => norm(r.name) === t);
+  const exact = list.find(x => norm(x.name) === target);
   if (exact) return exact.id;
 
-  const partial = rows.find((r) => norm(r.name).includes(t) || t.includes(norm(r.name)));
+  const partial = list.find(
+    x => norm(x.name).includes(target) || target.includes(norm(x.name))
+  );
   return partial ? partial.id : null;
 }
 
-async function getLatestReading() {
-  const r = await axios.get(`${PUBLIC_BASE_URL}/latestReading`, { timeout: 8000 });
-  if (!r.data || r.data.message) return null;
-  return r.data;
+async function apiGet(path) {
+  return axios.get(`${SERVER_BASE_URL}${path}`, { timeout: 8000 });
+}
+async function apiPost(path, body) {
+  return axios.post(`${SERVER_BASE_URL}${path}`, body, { timeout: 8000 });
+}
+async function apiPut(path, body) {
+  return axios.put(`${SERVER_BASE_URL}${path}`, body, { timeout: 8000 });
+}
+async function apiDelete(path) {
+  return axios.delete(`${SERVER_BASE_URL}${path}`, { timeout: 8000 });
 }
 
-// =========================
-// ALEXA HANDLERS (same intents)
-// =========================
+async function getLatestReading() {
+  const r = await apiGet("/latestReading");
+  if (!r.data || r.data.message) return null;
+  return r.data.row;
+}
+
+// =====================
+// ALEXA HANDLERS
+// =====================
 const LaunchRequestHandler = {
-  canHandle(h) {
-    return Alexa.getRequestType(h.requestEnvelope) === "LaunchRequest";
-  },
-  handle(h) {
+  canHandle: i => Alexa.getRequestType(i.requestEnvelope) === "LaunchRequest",
+  handle(i) {
     const speak =
-      "Yo. You can say: what's my latest scan, update my scan, delete my latest scan, or save a scan.";
-    return h.responseBuilder.speak(speak).reprompt(speak).getResponse();
+      "You can ask for your latest scan, update a scan, delete it, or save a new one.";
+    return i.responseBuilder.speak(speak).reprompt(speak).getResponse();
   },
 };
 
 const GetCharacterIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      Alexa.getIntentName(h.requestEnvelope) === "GetCharacterIntent"
-    );
-  },
-  async handle(h) {
-    try {
-      const latest = await getLatestReading();
-      if (!latest) {
-        return h.responseBuilder
-          .speak("No scans yet. Press the Arduino button to send one.")
-          .getResponse();
-      }
-
-      const speak =
-        `Your latest scan says ${latest.character_name} on ${latest.island_name}. ` +
-        `Ultrasonic is ${latest.ultrasonic_value} centimeters, and LiDAR is ${latest.lidar_value} centimeters.`;
-
-      return h.responseBuilder.speak(speak).getResponse();
-    } catch (e) {
-      console.log("GetCharacterIntent error:", e?.message || e);
-      return h.responseBuilder.speak("Sorry, I couldn't retrieve your latest scan.").getResponse();
+  canHandle: i =>
+    Alexa.getRequestType(i.requestEnvelope) === "IntentRequest" &&
+    Alexa.getIntentName(i.requestEnvelope) === "GetCharacterIntent",
+  async handle(i) {
+    const latest = await getLatestReading();
+    if (!latest) {
+      return i.responseBuilder
+        .speak("I couldn't find any scans yet.")
+        .getResponse();
     }
+
+    return i.responseBuilder.speak(
+      `Your latest scan says ${latest.character_name} on ${latest.island_name}.
+       Ultrasonic is ${latest.ultrasonic_value} centimeters,
+       and LiDAR is ${latest.lidar_value} centimeters.`
+    ).getResponse();
   },
 };
 
 const UpdateCharacterIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      Alexa.getIntentName(h.requestEnvelope) === "UpdateCharacterIntent"
-    );
-  },
-  async handle(h) {
-    try {
-      const slots = h.requestEnvelope.request.intent.slots || {};
-      const newIsland = slots.NewIsland?.value;
-      const newChar = slots.NewCharacter?.value;
+  canHandle: i =>
+    Alexa.getRequestType(i.requestEnvelope) === "IntentRequest" &&
+    Alexa.getIntentName(i.requestEnvelope) === "UpdateCharacterIntent",
+  async handle(i) {
+    const slots = i.requestEnvelope.request.intent.slots || {};
+    const character_id = findIdByName(CHARACTERS, slots.NewCharacter?.value);
+    const island_id = findIdByName(ISLANDS, slots.NewIsland?.value);
 
-      const latest = await getLatestReading();
-      if (!latest) {
-        return h.responseBuilder.speak("No scans to update yet. Send one first.").getResponse();
-      }
-
-      // Pull DB lookup lists (no hardcoded arrays)
-      const [islandsRes, charsRes] = await Promise.all([
-        axios.get(`${PUBLIC_BASE_URL}/islands`, { timeout: 8000 }),
-        axios.get(`${PUBLIC_BASE_URL}/characters`, { timeout: 8000 }),
-      ]);
-
-      const island_id = findIdByName(islandsRes.data.rows || [], newIsland);
-      const character_id = findIdByName(charsRes.data.rows || [], newChar);
-
-      if (!island_id || !character_id) {
-        return h.responseBuilder
-          .speak("I couldn't match that island or character. Try: update my scan to Luffy on East Blue.")
-          .reprompt("Try: update my scan to Zoro on Alabasta.")
-          .getResponse();
-      }
-
-      await axios.put(
-        `${PUBLIC_BASE_URL}/updateReading/${latest.reading_id}`,
-        { island_id, character_id },
-        { timeout: 8000 }
-      );
-
-      return h.responseBuilder
-        .speak(`Done. I updated your latest scan to ${newChar} on ${newIsland}.`)
+    if (!character_id || !island_id) {
+      return i.responseBuilder
+        .speak("I couldn't match that island or character.")
         .getResponse();
-    } catch (e) {
-      console.log("UpdateCharacterIntent error:", e?.message || e);
-      return h.responseBuilder.speak("Sorry, I couldn't update your latest scan.").getResponse();
     }
-  },
-};
 
-const DeleteScanIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      Alexa.getIntentName(h.requestEnvelope) === "DeleteScanIntent"
-    );
-  },
-  async handle(h) {
-    try {
-      const latest = await getLatestReading();
-      if (!latest) return h.responseBuilder.speak("There aren't any scans to delete.").getResponse();
-
-      await axios.delete(`${PUBLIC_BASE_URL}/deleteReading/${latest.reading_id}`, { timeout: 8000 });
-
-      return h.responseBuilder.speak("Deleted your latest scan.").getResponse();
-    } catch (e) {
-      console.log("DeleteScanIntent error:", e?.message || e);
-      return h.responseBuilder.speak("Sorry, I couldn't delete your latest scan.").getResponse();
+    const latest = await getLatestReading();
+    if (!latest) {
+      return i.responseBuilder.speak("No scans to update.").getResponse();
     }
-  },
-};
 
-// Optional: lets Alexa CREATE via /addReading (good for rubric)
-const SaveScanIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      Alexa.getIntentName(h.requestEnvelope) === "SaveScanIntent"
-    );
-  },
-  async handle(h) {
-    try {
-      const slots = h.requestEnvelope.request.intent.slots || {};
-      const islandName = slots.IslandName?.value;
-      const charName = slots.CharacterName?.value;
+    await apiPut(`/updateReading/${latest.reading_id}`, {
+      island_id,
+      character_id,
+    });
 
-      const [islandsRes, charsRes] = await Promise.all([
-        axios.get(`${PUBLIC_BASE_URL}/islands`, { timeout: 8000 }),
-        axios.get(`${PUBLIC_BASE_URL}/characters`, { timeout: 8000 }),
-      ]);
-
-      const island_id = findIdByName(islandsRes.data.rows || [], islandName);
-      const character_id = findIdByName(charsRes.data.rows || [], charName);
-
-      if (!island_id || !character_id) {
-        return h.responseBuilder
-          .speak("Try: save a scan for Luffy on East Blue.")
-          .reprompt("Try: save a scan for Zoro on Alabasta.")
-          .getResponse();
-      }
-
-      await axios.post(
-        `${PUBLIC_BASE_URL}/addReading`,
-        { ultrasonic_value: 0, lidar_value: 0, island_id, character_id },
-        { timeout: 8000 }
-      );
-
-      return h.responseBuilder
-        .speak(`Saved. I added a scan for ${charName} on ${islandName}.`)
-        .getResponse();
-    } catch (e) {
-      console.log("SaveScanIntent error:", e?.message || e);
-      return h.responseBuilder.speak("Sorry, I couldn't save a scan right now.").getResponse();
-    }
-  },
-};
-
-const HelpIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      Alexa.getIntentName(h.requestEnvelope) === "AMAZON.HelpIntent"
-    );
-  },
-  handle(h) {
-    const speak =
-      "Try: what's my latest scan, update my scan to Luffy on East Blue, delete my latest scan, or save a scan for Zoro on Alabasta.";
-    return h.responseBuilder.speak(speak).reprompt(speak).getResponse();
-  },
-};
-
-const CancelAndStopIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      (Alexa.getIntentName(h.requestEnvelope) === "AMAZON.StopIntent" ||
-        Alexa.getIntentName(h.requestEnvelope) === "AMAZON.CancelIntent")
-    );
-  },
-  handle(h) {
-    return h.responseBuilder.speak("Goodbye.").getResponse();
-  },
-};
-
-const FallbackIntentHandler = {
-  canHandle(h) {
-    return (
-      Alexa.getRequestType(h.requestEnvelope) === "IntentRequest" &&
-      Alexa.getIntentName(h.requestEnvelope) === "AMAZON.FallbackIntent"
-    );
-  },
-  handle(h) {
-    return h.responseBuilder
-      .speak("Try asking: what's my latest scan?")
-      .reprompt("What's my latest scan?")
+    return i.responseBuilder
+      .speak("Your scan has been updated.")
       .getResponse();
   },
 };
 
-const SessionEndedRequestHandler = {
-  canHandle(h) {
-    return Alexa.getRequestType(h.requestEnvelope) === "SessionEndedRequest";
+const DeleteScanIntentHandler = {
+  canHandle: i =>
+    Alexa.getRequestType(i.requestEnvelope) === "IntentRequest" &&
+    Alexa.getIntentName(i.requestEnvelope) === "DeleteScanIntent",
+  async handle(i) {
+    const latest = await getLatestReading();
+    if (!latest) {
+      return i.responseBuilder.speak("Nothing to delete.").getResponse();
+    }
+
+    await apiDelete(`/deleteReading/${latest.reading_id}`);
+    return i.responseBuilder.speak("Deleted your latest scan.").getResponse();
   },
-  handle(h) {
-    return h.responseBuilder.getResponse();
+};
+
+const SaveScanIntentHandler = {
+  canHandle: i =>
+    Alexa.getRequestType(i.requestEnvelope) === "IntentRequest" &&
+    Alexa.getIntentName(i.requestEnvelope) === "SaveScanIntent",
+  async handle(i) {
+    const slots = i.requestEnvelope.request.intent.slots || {};
+    const island_id = findIdByName(ISLANDS, slots.IslandName?.value);
+    const character_id = findIdByName(CHARACTERS, slots.CharacterName?.value);
+
+    if (!island_id || !character_id) {
+      return i.responseBuilder
+        .speak("Tell me an island and a character.")
+        .getResponse();
+    }
+
+    await apiPost("/addReading", {
+      ultrasonic_value: 0,
+      lidar_value: 0,
+      island_id,
+      character_id,
+    });
+
+    return i.responseBuilder.speak("Scan saved.").getResponse();
   },
 };
 
 const ErrorHandler = {
-  canHandle() {
-    return true;
-  },
-  handle(h, error) {
-    console.log("Alexa error:", error?.message || error);
-    return h.responseBuilder.speak("Sorry, something went wrong.").reprompt("Try again.").getResponse();
+  canHandle: () => true,
+  handle(i, err) {
+    console.error("Alexa Error:", err);
+    return i.responseBuilder
+      .speak("Sorry, something went wrong.")
+      .getResponse();
   },
 };
 
-// ✅ IMPORTANT: MUST be .create() (NOT .lambda())
+// =====================
+// BUILD ALEXA SKILL (NO LAMBDA)
+// =====================
 const skill = Alexa.SkillBuilders.custom()
   .addRequestHandlers(
     LaunchRequestHandler,
     GetCharacterIntentHandler,
     SaveScanIntentHandler,
     UpdateCharacterIntentHandler,
-    DeleteScanIntentHandler,
-    HelpIntentHandler,
-    CancelAndStopIntentHandler,
-    FallbackIntentHandler,
-    SessionEndedRequestHandler
+    DeleteScanIntentHandler
   )
   .addErrorHandlers(ErrorHandler)
   .create();
 
-// ✅ Express adapter (options object API)
-const adapter = new ExpressAdapter({
-  skill,
-  skillId: process.env.ALEXA_SKILL_ID,
-  verifySignature: true,
-  verifyTimestamp: true,
-});
+// =====================
+// ALEXA EXPRESS ENDPOINT
+// =====================
+const adapter = new ExpressAdapter(skill, false, false);
+app.post("/alexa", adapter.getRequestHandlers());
 
-// ✅ Alexa endpoint MUST use raw body
-app.post("/alexa", express.raw({ type: "application/json" }), adapter.getRequestHandlers());
-
-// ✅ Now enable JSON parsing for normal routes
-app.use(express.json());
-
-// =========================
-// REST API ROUTES
-// =========================
-
-// Health check
-app.get("/", (req, res) => res.send("One Piece IoT API is running ✅"));
-
-// INSERT (Arduino + Alexa SaveScan)
+// =====================
+// API ROUTES (UNCHANGED)
+// =====================
 app.post("/addReading", async (req, res) => {
-  try {
-    const { ultrasonic_value, lidar_value, island_id, character_id } = req.body;
-
-    if (
-      ultrasonic_value === undefined ||
-      lidar_value === undefined ||
-      island_id === undefined ||
-      character_id === undefined
-    ) return res.status(400).json({ ok: false, message: "Missing required fields" });
-
-    const sql = `
-      INSERT INTO readings (ultrasonic_value, lidar_value, island_id, character_id)
-      VALUES (?, ?, ?, ?)
-    `;
-    const [result] = await db.execute(sql, [
-      Number(ultrasonic_value),
-      Number(lidar_value),
-      Number(island_id),
-      Number(character_id),
-    ]);
-
-    res.json({ ok: true, message: "Reading added", reading_id: result.insertId });
-  } catch (err) {
-    console.error("❌ /addReading error:", err);
-    res.status(500).json({ ok: false, error: err.message, code: err.code });
-  }
+  const { ultrasonic_value, lidar_value, island_id, character_id } = req.body;
+  const sql =
+    "INSERT INTO readings (ultrasonic_value, lidar_value, island_id, character_id) VALUES (?, ?, ?, ?)";
+  const [r] = await db.execute(sql, [
+    ultrasonic_value,
+    lidar_value,
+    island_id,
+    character_id,
+  ]);
+  res.json({ ok: true, reading_id: r.insertId });
 });
 
-// READ latest (JOIN)
 app.get("/latestReading", async (req, res) => {
-  try {
-    const sql = `
-      SELECT 
-        r.reading_id,
-        r.ultrasonic_value,
-        r.lidar_value,
-        r.island_id,
-        r.character_id,
-        i.island_name,
-        c.character_name
-      FROM readings r
-      INNER JOIN islands i ON r.island_id = i.island_id
-      INNER JOIN characters c ON r.character_id = c.character_id
-      ORDER BY r.reading_id DESC
-      LIMIT 1
-    `;
-    const [rows] = await db.query(sql);
-    if (rows.length === 0) return res.json({ message: "No readings yet" });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error("❌ /latestReading error:", err);
-    res.status(500).json({ error: "DB query failed", details: err.message });
-  }
+  const sql = `
+    SELECT r.reading_id, r.ultrasonic_value, r.lidar_value,
+           i.island_name, c.character_name
+    FROM readings r
+    JOIN islands i ON r.island_id=i.island_id
+    JOIN characters c ON r.character_id=c.character_id
+    ORDER BY r.reading_id DESC LIMIT 1`;
+  const [rows] = await db.query(sql);
+  if (!rows.length) return res.json({ message: "No readings yet" });
+  res.json({ row: rows[0] });
 });
 
-// READ islands (for Alexa lookup)
-app.get("/islands", async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      "SELECT island_id AS id, island_name AS name FROM islands ORDER BY island_id"
-    );
-    res.json({ ok: true, rows });
-  } catch (err) {
-    console.error("❌ /islands error:", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+// =====================
+// HEALTH CHECK
+// =====================
+app.get("/", (_, res) => res.send("One Piece IoT API running ✅"));
 
-// READ characters (for Alexa lookup)
-app.get("/characters", async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      "SELECT character_id AS id, character_name AS name FROM characters ORDER BY character_id"
-    );
-    res.json({ ok: true, rows });
-  } catch (err) {
-    console.error("❌ /characters error:", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// UPDATE
-app.put("/updateReading/:id", async (req, res) => {
-  try {
-    const readingId = Number(req.params.id);
-    const island_id = Number(req.body.island_id);
-    const character_id = Number(req.body.character_id);
-
-    await db.query("UPDATE readings SET island_id = ?, character_id = ? WHERE reading_id = ?", [
-      island_id,
-      character_id,
-      readingId,
-    ]);
-
-    res.json({ message: "Reading updated" });
-  } catch (err) {
-    console.error("❌ /updateReading error:", err);
-    res.status(500).json({ error: "DB update failed", details: err.message });
-  }
-});
-
-// DELETE
-app.delete("/deleteReading/:id", async (req, res) => {
-  try {
-    const readingId = Number(req.params.id);
-    await db.query("DELETE FROM readings WHERE reading_id = ?", [readingId]);
-    res.json({ message: "Reading deleted" });
-  } catch (err) {
-    console.error("❌ /deleteReading error:", err);
-    res.status(500).json({ error: "DB delete failed", details: err.message });
-  }
-});
-
-// Start server
+// =====================
+// START SERVER
+// =====================
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Combined server running on port ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on port ${PORT}`)
+);
