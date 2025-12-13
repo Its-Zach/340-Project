@@ -1,3 +1,4 @@
+// server.js (Combined: Express REST API + Alexa endpoint)
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
@@ -9,11 +10,11 @@ const { ExpressAdapter } = require("ask-sdk-express-adapter");
 const app = express();
 app.use(cors());
 
-// ✅ DO NOT add express.json() yet (Alexa needs raw body first)
+// ✅ IMPORTANT: Alexa endpoint must use RAW body BEFORE express.json()
 const PUBLIC_BASE_URL =
   (process.env.PUBLIC_BASE_URL || "https://three40-project-5y9o.onrender.com").replace(/\/+$/, "");
 
-// ✅ DB pool
+// ---------- DB ----------
 const db = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -51,9 +52,8 @@ async function getLatestReading() {
 }
 
 // =========================
-// Alexa Handlers (same intents)
+// ALEXA HANDLERS (same intents)
 // =========================
-
 const LaunchRequestHandler = {
   canHandle(h) {
     return Alexa.getRequestType(h.requestEnvelope) === "LaunchRequest";
@@ -111,7 +111,7 @@ const UpdateCharacterIntentHandler = {
         return h.responseBuilder.speak("No scans to update yet. Send one first.").getResponse();
       }
 
-      // Fetch lookup tables from DB (no hardcoded arrays)
+      // Pull DB lookup lists (no hardcoded arrays)
       const [islandsRes, charsRes] = await Promise.all([
         axios.get(`${PUBLIC_BASE_URL}/islands`, { timeout: 8000 }),
         axios.get(`${PUBLIC_BASE_URL}/characters`, { timeout: 8000 }),
@@ -165,6 +165,7 @@ const DeleteScanIntentHandler = {
   },
 };
 
+// Optional: lets Alexa CREATE via /addReading (good for rubric)
 const SaveScanIntentHandler = {
   canHandle(h) {
     return (
@@ -270,7 +271,7 @@ const ErrorHandler = {
   },
 };
 
-// Build skill
+// ✅ IMPORTANT: MUST be .create() (NOT .lambda())
 const skill = Alexa.SkillBuilders.custom()
   .addRequestHandlers(
     LaunchRequestHandler,
@@ -286,7 +287,7 @@ const skill = Alexa.SkillBuilders.custom()
   .addErrorHandlers(ErrorHandler)
   .create();
 
-// ✅ FIXED: options object API + skillId + verification
+// ✅ Express adapter (options object API)
 const adapter = new ExpressAdapter({
   skill,
   skillId: process.env.ALEXA_SKILL_ID,
@@ -294,68 +295,20 @@ const adapter = new ExpressAdapter({
   verifyTimestamp: true,
 });
 
-// ✅ FIXED: raw body for Alexa endpoint
+// ✅ Alexa endpoint MUST use raw body
 app.post("/alexa", express.raw({ type: "application/json" }), adapter.getRequestHandlers());
 
-// ✅ Now safe to parse JSON for normal routes
+// ✅ Now enable JSON parsing for normal routes
 app.use(express.json());
 
 // =========================
 // REST API ROUTES
 // =========================
 
+// Health check
 app.get("/", (req, res) => res.send("One Piece IoT API is running ✅"));
 
-app.get("/latestReading", async (req, res) => {
-  try {
-    const sql = `
-      SELECT 
-        r.reading_id,
-        r.ultrasonic_value,
-        r.lidar_value,
-        r.island_id,
-        r.character_id,
-        i.island_name,
-        c.character_name
-      FROM readings r
-      INNER JOIN islands i ON r.island_id = i.island_id
-      INNER JOIN characters c ON r.character_id = c.character_id
-      ORDER BY r.reading_id DESC
-      LIMIT 1
-    `;
-    const [rows] = await db.query(sql);
-    if (rows.length === 0) return res.json({ message: "No readings yet" });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error("❌ /latestReading error:", err);
-    res.status(500).json({ error: "DB query failed", details: err.message });
-  }
-});
-
-app.get("/islands", async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      "SELECT island_id AS id, island_name AS name FROM islands ORDER BY island_id"
-    );
-    res.json({ ok: true, rows });
-  } catch (err) {
-    console.error("❌ /islands error:", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-app.get("/characters", async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      "SELECT character_id AS id, character_name AS name FROM characters ORDER BY character_id"
-    );
-    res.json({ ok: true, rows });
-  } catch (err) {
-    console.error("❌ /characters error:", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
+// INSERT (Arduino + Alexa SaveScan)
 app.post("/addReading", async (req, res) => {
   try {
     const { ultrasonic_value, lidar_value, island_id, character_id } = req.body;
@@ -385,6 +338,60 @@ app.post("/addReading", async (req, res) => {
   }
 });
 
+// READ latest (JOIN)
+app.get("/latestReading", async (req, res) => {
+  try {
+    const sql = `
+      SELECT 
+        r.reading_id,
+        r.ultrasonic_value,
+        r.lidar_value,
+        r.island_id,
+        r.character_id,
+        i.island_name,
+        c.character_name
+      FROM readings r
+      INNER JOIN islands i ON r.island_id = i.island_id
+      INNER JOIN characters c ON r.character_id = c.character_id
+      ORDER BY r.reading_id DESC
+      LIMIT 1
+    `;
+    const [rows] = await db.query(sql);
+    if (rows.length === 0) return res.json({ message: "No readings yet" });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("❌ /latestReading error:", err);
+    res.status(500).json({ error: "DB query failed", details: err.message });
+  }
+});
+
+// READ islands (for Alexa lookup)
+app.get("/islands", async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT island_id AS id, island_name AS name FROM islands ORDER BY island_id"
+    );
+    res.json({ ok: true, rows });
+  } catch (err) {
+    console.error("❌ /islands error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// READ characters (for Alexa lookup)
+app.get("/characters", async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT character_id AS id, character_name AS name FROM characters ORDER BY character_id"
+    );
+    res.json({ ok: true, rows });
+  } catch (err) {
+    console.error("❌ /characters error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// UPDATE
 app.put("/updateReading/:id", async (req, res) => {
   try {
     const readingId = Number(req.params.id);
@@ -404,6 +411,7 @@ app.put("/updateReading/:id", async (req, res) => {
   }
 });
 
+// DELETE
 app.delete("/deleteReading/:id", async (req, res) => {
   try {
     const readingId = Number(req.params.id);
@@ -415,5 +423,6 @@ app.delete("/deleteReading/:id", async (req, res) => {
   }
 });
 
+// Start server
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🚀 Combined server running on port ${PORT}`));
