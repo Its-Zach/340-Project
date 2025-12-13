@@ -1,40 +1,34 @@
 // =====================
-// IMPORTS (ADD THESE)
+// IMPORTS
 // =====================
 const Alexa = require("ask-sdk-core");
 const { ExpressAdapter } = require("ask-sdk-express-adapter");
 
-// =====================
-// EXISTING IMPORTS (UNCHANGED)
-// =====================
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
 
 const app = express();
 app.use(cors());
+
 // =====================
-// DATABASE POOL (UNCHANGED)
+// DATABASE POOL
 // =====================
 const db = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-
   waitForConnections: true,
   connectionLimit: 5,
   queueLimit: 0,
 });
-app.use(express.json());
-
-
 
 // =======================================================
 // ===================== ALEXA CODE =======================
 // =======================================================
 
-// 🔁 Helper: get latest reading directly from DB (NO API CALLS)
+// Helper: get latest reading directly from DB
 async function getLatestReading() {
   const sql = `
     SELECT 
@@ -53,9 +47,6 @@ async function getLatestReading() {
   return rows.length ? rows[0] : null;
 }
 
-// =====================
-// ALEXA HANDLERS
-// =====================
 const LaunchRequestHandler = {
   canHandle(i) {
     return Alexa.getRequestType(i.requestEnvelope) === "LaunchRequest";
@@ -77,16 +68,15 @@ const GetCharacterIntentHandler = {
   async handle(i) {
     const latest = await getLatestReading();
     if (!latest) {
-      return i.responseBuilder
-        .speak("I couldn't find any scans yet.")
-        .getResponse();
+      return i.responseBuilder.speak("I couldn't find any scans yet.").getResponse();
     }
 
-    return i.responseBuilder.speak(
-      `Your latest scan shows ${latest.character_name} on ${latest.island_name}.
-       Ultrasonic is ${latest.ultrasonic_value} centimeters,
-       and LiDAR is ${latest.lidar_value} centimeters.`
-    ).getResponse();
+    const speak =
+      `Your latest scan shows ${latest.character_name} on ${latest.island_name}. ` +
+      `Ultrasonic is ${latest.ultrasonic_value} centimeters, ` +
+      `and LiDAR is ${latest.lidar_value} centimeters.`;
+
+    return i.responseBuilder.speak(speak).getResponse();
   },
 };
 
@@ -100,40 +90,26 @@ const DeleteScanIntentHandler = {
   async handle(i) {
     const latest = await getLatestReading();
     if (!latest) {
-      return i.responseBuilder
-        .speak("There are no scans to delete.")
-        .getResponse();
+      return i.responseBuilder.speak("There are no scans to delete.").getResponse();
     }
 
-    await db.execute(
-      "DELETE FROM readings WHERE reading_id = ?",
-      [latest.reading_id]
-    );
+    await db.execute("DELETE FROM readings WHERE reading_id = ?", [latest.reading_id]);
 
-    return i.responseBuilder
-      .speak("Deleted your latest scan.")
-      .getResponse();
+    return i.responseBuilder.speak("Deleted your latest scan.").getResponse();
   },
 };
 
-// =====================
-// ERROR HANDLER
-// =====================
 const ErrorHandler = {
   canHandle() {
     return true;
   },
   handle(i, err) {
     console.error("Alexa error:", err);
-    return i.responseBuilder
-      .speak("Sorry, something went wrong.")
-      .getResponse();
+    return i.responseBuilder.speak("Sorry, something went wrong.").getResponse();
   },
 };
 
-// =====================
-// BUILD SKILL (NO LAMBDA)
-// =====================
+// ✅ BUILD SKILL (NO LAMBDA)
 const skill = Alexa.SkillBuilders.custom()
   .addRequestHandlers(
     LaunchRequestHandler,
@@ -141,20 +117,21 @@ const skill = Alexa.SkillBuilders.custom()
     DeleteScanIntentHandler
   )
   .addErrorHandlers(ErrorHandler)
-  .create();
+  .create(); // ✅ REQUIRED (not .lambda())
+
+// ✅ ALEXA ENDPOINT
+const adapter = new ExpressAdapter(skill, false, false); // ✅ REQUIRED
+app.post("/alexa", adapter.getRequestHandlers());        // ✅ matches your console endpoint
 
 // =====================
-// ALEXA ENDPOINT
+// NOW enable JSON parsing for your API routes
 // =====================
-const adapter = new ExpressAdapter(skill, false, false);
-app.post("/alexa", adapter.getRequestHandlers());
+app.use(express.json());
 
 // =======================================================
 // ================= EXISTING API ROUTES ==================
 // =======================================================
-// ⚠️ LEAVE EVERYTHING BELOW THIS LINE UNCHANGED
-// (your /addReading, /latestReading, /updateReading, etc.)
-// 1️⃣ CREATE / INSERT (Arduino posts here)
+
 app.post("/addReading", async (req, res) => {
   console.log("📨 POST /addReading", req.body);
 
@@ -163,7 +140,6 @@ app.post("/addReading", async (req, res) => {
   const island_id = Number(req.body.island_id);
   const character_id = Number(req.body.character_id);
 
-  // Validate (integers required)
   if (
     !Number.isFinite(ultrasonic_value) ||
     !Number.isFinite(lidar_value) ||
@@ -172,7 +148,8 @@ app.post("/addReading", async (req, res) => {
   ) {
     return res.status(400).json({
       ok: false,
-      message: "Invalid input. Send ultrasonic_value, lidar_value (numbers) and island_id, character_id (integers).",
+      message:
+        "Invalid input. Send ultrasonic_value, lidar_value (numbers) and island_id, character_id (integers).",
     });
   }
 
@@ -205,7 +182,6 @@ app.post("/addReading", async (req, res) => {
   }
 });
 
-// 2️⃣ READ ALL (with INNER JOIN)
 app.get("/readings", async (req, res) => {
   console.log("📖 GET /readings");
 
@@ -233,7 +209,6 @@ app.get("/readings", async (req, res) => {
   }
 });
 
-// 3️⃣ READ LATEST (Alexa-friendly)
 app.get("/latestReading", async (req, res) => {
   console.log("📖 GET /latestReading");
 
@@ -263,9 +238,6 @@ app.get("/latestReading", async (req, res) => {
   }
 });
 
-
-
-// 4️⃣ UPDATE (edit island_id + character_id)
 app.put("/updateReading/:id", async (req, res) => {
   const reading_id = Number(req.params.id);
   const island_id = Number(req.body.island_id);
@@ -290,7 +262,6 @@ app.put("/updateReading/:id", async (req, res) => {
   }
 });
 
-// 5️⃣ DELETE
 app.delete("/deleteReading/:id", async (req, res) => {
   const reading_id = Number(req.params.id);
 
@@ -308,12 +279,11 @@ app.delete("/deleteReading/:id", async (req, res) => {
     res.status(500).json({ ok: false, error: "DB delete failed", details: err.message });
   }
 });
-// Health check
+
 app.get("/", (req, res) => {
   res.send("One Piece IoT API is running ✅");
 });
 
-// Render PORT
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
