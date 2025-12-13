@@ -13,8 +13,6 @@ const mysql = require("mysql2/promise");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
-
 // =====================
 // DATABASE POOL (UNCHANGED)
 // =====================
@@ -28,6 +26,9 @@ const db = mysql.createPool({
   connectionLimit: 5,
   queueLimit: 0,
 });
+app.use(express.json());
+
+
 
 // =======================================================
 // ===================== ALEXA CODE =======================
