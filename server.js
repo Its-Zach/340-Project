@@ -262,21 +262,7 @@ app.get("/latestReading", async (req, res) => {
   }
 });
 
-app.post('/alexa', (req, res) => {
-    console.log('Alexa request received:', req.body);
 
-    // Minimal response to test skill
-    res.json({
-        version: "1.0",
-        response: {
-            outputSpeech: {
-                type: "PlainText",
-                text: "Hello from your Alexa skill!"
-            },
-            shouldEndSession: true
-        }
-    });
-});
 
 // 4️⃣ UPDATE (edit island_id + character_id)
 app.put("/updateReading/:id", async (req, res) => {
