@@ -16,9 +16,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "ask-sdk-core": "^2.13.5",
-    "ask-sdk-express-adapter": "^2.13.5",
-    "axios": "^1.6.0",
+    "ask-sdk-core": "^2.14.0",
+    "ask-sdk-express-adapter": "^2.14.0",
+    "axios": "^1.13.2",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "mysql2": "^3.6.5"
