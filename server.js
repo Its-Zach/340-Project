@@ -1,4 +1,3 @@
-// server.js (COMBINED + FIXED FOR ALEXA SIGNATURE VERIFICATION)
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
@@ -10,16 +9,9 @@ const { ExpressAdapter } = require("ask-sdk-express-adapter");
 const app = express();
 app.use(cors());
 
-// ✅ IMPORTANT: do NOT do app.use(express.json()) yet!
-// Alexa needs RAW body for request verification.
-
+// ✅ DO NOT add express.json() yet (Alexa needs raw body first)
 const PUBLIC_BASE_URL =
   (process.env.PUBLIC_BASE_URL || "https://three40-project-5y9o.onrender.com").replace(/\/+$/, "");
-
-const SKILL_ID = process.env.ALEXA_SKILL_ID; // amzn1.ask.skill....
-if (!SKILL_ID) {
-  console.log("⚠️ ALEXA_SKILL_ID is not set. Set it in Render env vars for best results.");
-}
 
 // ✅ DB pool
 const db = mysql.createPool({
@@ -32,7 +24,7 @@ const db = mysql.createPool({
   queueLimit: 0,
 });
 
-// ===== Helper functions =====
+// ---------- Helpers ----------
 function norm(s) {
   return String(s || "")
     .toLowerCase()
@@ -58,9 +50,10 @@ async function getLatestReading() {
   return r.data;
 }
 
-// =====================
-// ALEXA SKILL HANDLERS
-// =====================
+// =========================
+// Alexa Handlers (same intents)
+// =========================
+
 const LaunchRequestHandler = {
   canHandle(h) {
     return Alexa.getRequestType(h.requestEnvelope) === "LaunchRequest";
@@ -115,12 +108,10 @@ const UpdateCharacterIntentHandler = {
 
       const latest = await getLatestReading();
       if (!latest) {
-        return h.responseBuilder
-          .speak("No scans to update yet. Send one first.")
-          .getResponse();
+        return h.responseBuilder.speak("No scans to update yet. Send one first.").getResponse();
       }
 
-      // Pull lookup lists from DB (no hardcoded arrays)
+      // Fetch lookup tables from DB (no hardcoded arrays)
       const [islandsRes, charsRes] = await Promise.all([
         axios.get(`${PUBLIC_BASE_URL}/islands`, { timeout: 8000 }),
         axios.get(`${PUBLIC_BASE_URL}/characters`, { timeout: 8000 }),
@@ -131,9 +122,7 @@ const UpdateCharacterIntentHandler = {
 
       if (!island_id || !character_id) {
         return h.responseBuilder
-          .speak(
-            "I couldn't match that island or character. Try: update my scan to Luffy on East Blue."
-          )
+          .speak("I couldn't match that island or character. Try: update my scan to Luffy on East Blue.")
           .reprompt("Try: update my scan to Zoro on Alabasta.")
           .getResponse();
       }
@@ -200,11 +189,10 @@ const SaveScanIntentHandler = {
       if (!island_id || !character_id) {
         return h.responseBuilder
           .speak("Try: save a scan for Luffy on East Blue.")
-          .reprompt("Say: save a scan for Zoro on Alabasta.")
+          .reprompt("Try: save a scan for Zoro on Alabasta.")
           .getResponse();
       }
 
-      // Create a reading via your API route (rubric: Alexa hits create route too)
       await axios.post(
         `${PUBLIC_BASE_URL}/addReading`,
         { ultrasonic_value: 0, lidar_value: 0, island_id, character_id },
@@ -282,7 +270,7 @@ const ErrorHandler = {
   },
 };
 
-// Build the skill
+// Build skill
 const skill = Alexa.SkillBuilders.custom()
   .addRequestHandlers(
     LaunchRequestHandler,
@@ -298,23 +286,26 @@ const skill = Alexa.SkillBuilders.custom()
   .addErrorHandlers(ErrorHandler)
   .create();
 
-// ✅ FIX: pass SKILL_ID correctly (don’t pass true/true as skillId by accident)
-const adapter = new ExpressAdapter(skill, SKILL_ID, true, true);
+// ✅ FIXED: options object API + skillId + verification
+const adapter = new ExpressAdapter({
+  skill,
+  skillId: process.env.ALEXA_SKILL_ID,
+  verifySignature: true,
+  verifyTimestamp: true,
+});
 
-// ✅ FIX: Alexa endpoint must receive RAW JSON body for signature verification
+// ✅ FIXED: raw body for Alexa endpoint
 app.post("/alexa", express.raw({ type: "application/json" }), adapter.getRequestHandlers());
 
-// ✅ Now enable JSON parsing for your normal REST API routes
+// ✅ Now safe to parse JSON for normal routes
 app.use(express.json());
 
-/* =========================
-   REST API ROUTES (DB)
-   ========================= */
+// =========================
+// REST API ROUTES
+// =========================
 
-// Health check
 app.get("/", (req, res) => res.send("One Piece IoT API is running ✅"));
 
-// READ latest (JOIN)
 app.get("/latestReading", async (req, res) => {
   try {
     const sql = `
@@ -341,7 +332,6 @@ app.get("/latestReading", async (req, res) => {
   }
 });
 
-// READ islands (for Alexa lookup)
 app.get("/islands", async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -354,7 +344,6 @@ app.get("/islands", async (req, res) => {
   }
 });
 
-// READ characters (for Alexa lookup)
 app.get("/characters", async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -367,10 +356,17 @@ app.get("/characters", async (req, res) => {
   }
 });
 
-// INSERT (Arduino/Alexa)
 app.post("/addReading", async (req, res) => {
   try {
     const { ultrasonic_value, lidar_value, island_id, character_id } = req.body;
+
+    if (
+      ultrasonic_value === undefined ||
+      lidar_value === undefined ||
+      island_id === undefined ||
+      character_id === undefined
+    ) return res.status(400).json({ ok: false, message: "Missing required fields" });
+
     const sql = `
       INSERT INTO readings (ultrasonic_value, lidar_value, island_id, character_id)
       VALUES (?, ?, ?, ?)
@@ -381,6 +377,7 @@ app.post("/addReading", async (req, res) => {
       Number(island_id),
       Number(character_id),
     ]);
+
     res.json({ ok: true, message: "Reading added", reading_id: result.insertId });
   } catch (err) {
     console.error("❌ /addReading error:", err);
@@ -388,17 +385,18 @@ app.post("/addReading", async (req, res) => {
   }
 });
 
-// UPDATE
 app.put("/updateReading/:id", async (req, res) => {
   try {
     const readingId = Number(req.params.id);
     const island_id = Number(req.body.island_id);
     const character_id = Number(req.body.character_id);
 
-    await db.query(
-      "UPDATE readings SET island_id = ?, character_id = ? WHERE reading_id = ?",
-      [island_id, character_id, readingId]
-    );
+    await db.query("UPDATE readings SET island_id = ?, character_id = ? WHERE reading_id = ?", [
+      island_id,
+      character_id,
+      readingId,
+    ]);
+
     res.json({ message: "Reading updated" });
   } catch (err) {
     console.error("❌ /updateReading error:", err);
@@ -406,7 +404,6 @@ app.put("/updateReading/:id", async (req, res) => {
   }
 });
 
-// DELETE
 app.delete("/deleteReading/:id", async (req, res) => {
   try {
     const readingId = Number(req.params.id);
@@ -418,6 +415,5 @@ app.delete("/deleteReading/:id", async (req, res) => {
   }
 });
 
-// Start
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🚀 Combined server running on port ${PORT}`));
