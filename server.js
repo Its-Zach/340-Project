@@ -6,15 +6,6 @@ const axios = require("axios");
 
 const Alexa = require("ask-sdk-core");
 const { ExpressAdapter } = require("ask-sdk-express-adapter");
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// ✅ Public base URL for calling your OWN routes from inside Alexa handlers
-// Set this in Render env vars: PUBLIC_BASE_URL=https://three40-project-5y9o.onrender.com
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://three40-project-5y9o.onrender.com";
-
 // ✅ DB pool
 const db = mysql.createPool({
   host: process.env.DB_HOST,
@@ -25,6 +16,16 @@ const db = mysql.createPool({
   connectionLimit: 5,
   queueLimit: 0,
 });
+
+const app = express();
+app.use(cors());
+
+app.use(express.json());
+
+// ✅ Public base URL for calling your OWN routes from inside Alexa handlers
+// Set this in Render env vars: PUBLIC_BASE_URL=https://three40-project-5y9o.onrender.com
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://three40-project-5y9o.onrender.com";
+
 
 /* =========================
    YOUR EXISTING API ROUTES
